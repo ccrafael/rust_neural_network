@@ -1,48 +1,42 @@
-use rust_neural_network::Tensor;
+use candle_core::{DType, Device, Result, Tensor};
+use candle_nn::{AdamW, Optimizer, VarMap};
+use rust_neural_network::Mlp;
 
-fn main() {
-    // Test 1: Square matrices (2x2 * 2x2)
-    println!("--- Test 1: Square matrices (2x2 * 2x2) ---");
-    let tensor1 = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
-    let tensor2 = Tensor::new(vec![5.0, 6.0, 7.0, 8.0], vec![2, 2]);
+const LR: f64 = 0.1;
+const EPOCHS: usize = 3000;
 
-    println!("Tensor 1:");
-    tensor1.print();
-    println!("Tensor 2:");
-    tensor2.print();
+fn main() -> Result<()> {
+    let device = Device::Cpu;
 
-    println!("\nElement-wise multiplication:");
-    let mul_result = tensor1.mul(&tensor2);
-    mul_result.print();
+    // XOR problem: the classic test that requires a non-linear model.
+    let xs = Tensor::new(
+        &[[-1f32, -1.0], [-1.0, 1.0], [1.0, -1.0], [1.0, 1.0]],
+        &device,
+    )?;
+    let ys = Tensor::new(&[-1f32, 1.0, 1.0, -1.0], &device)?.unsqueeze(1)?;
 
-    println!("\nMatrix multiplication (dot product):");
-    let dot_result = tensor1.dot(&tensor2);
-    dot_result.print();
+    let vs = VarMap::new();
+    let mlp = Mlp::new(&vs, 2, 8, 8, 1, &device, DType::F32)?;
+    let mut optim = AdamW::new_lr(vs.all_vars(), LR)?;
 
-    // Test 2: Non-square matrices (2x3 * 3x2)
-    println!("\n--- Test 2: Non-square matrices (2x3 * 3x2) ---");
-    // 2x3 matrix
-    let tensor3 = Tensor::new(vec![
-        1.0, 2.0, 3.0, 
-        4.0, 5.0, 6.0
-    ], vec![2, 3]);
-    
-    // 3x2 matrix
-    let tensor4 = Tensor::new(vec![
-        7.0, 8.0, 
-        9.0, 10.0, 
-        11.0, 12.0
-    ], vec![3, 2]);
+    for epoch in 0..EPOCHS {
+        let logits = mlp.forward(&xs)?;
+        let loss = (logits - &ys)?.sqr()?.mean_all()?;
+        if epoch % 300 == 0 {
+            println!("epoch {epoch:4}  loss {:.6}", loss.to_scalar::<f32>()?);
+        }
+        let grads = loss.backward()?;
+        optim.step(&grads)?;
+    }
 
-    println!("Tensor 3 (2x3):");
-    tensor3.print();
-    println!("Tensor 4 (3x2):");
-    tensor4.print();
+    let preds = mlp.forward(&xs)?.round()?;
+    println!("\n--- predictions (learned XOR) ---");
+    let xs_v = xs.to_vec2::<f32>()?;
+    let ys_v = ys.flatten_all()?.to_vec1::<f32>()?;
+    let preds_v = preds.flatten_all()?.to_vec1::<f32>()?;
+    for ((x, y), p) in xs_v.iter().zip(ys_v).zip(preds_v) {
+        println!("inputs {x:?}  target {y:>2.0}  prediction {p:>2.0}");
+    }
 
-    println!("\nMatrix multiplication (dot product):");
-    let dot_non_square_result = tensor3.dot(&tensor4);
-    dot_non_square_result.print();
-    // Expected result:
-    // [1*7 + 2*9 + 3*11, 1*8 + 2*10 + 3*12] = [7 + 18 + 33, 8 + 20 + 36] = [58, 64]
-    // [4*7 + 5*9 + 6*11, 4*8 + 5*10 + 6*12] = [28 + 45 + 66, 32 + 50 + 72] = [139, 154]
+    Ok(())
 }
